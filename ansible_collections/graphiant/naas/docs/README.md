@@ -53,6 +53,7 @@ ansible-doc graphiant.naas.graphiant_security_policy
 ansible-doc graphiant.naas.graphiant_backbone
 ansible-doc graphiant.naas.graphiant_edge_services
 ansible-doc graphiant.naas.graphiant_nat_policy
+ansible-doc graphiant.naas.graphiant_public_vif
 ```
 
 ## Building Documentation Site

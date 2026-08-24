@@ -38,6 +38,7 @@ This collection provides Ansible modules to automate:
 - NAT Policy configuration on Edge Devices (rulesets and LAN segment attachments)
 - Prefix and Port List configuration on Edge Devices
 - Local Extranet policies (single-tenant LAN segment sharing across sites/branches)
+- Public VIF (gateway "local data exchange") services on Graphiant-managed gateway appliances
 
 ### Key Features
 
@@ -91,6 +92,8 @@ This collection provides Ansible modules to automate:
 | `graphiant_prefix_port_list` | Manage Prefix & Port Lists on Edge devices |
 | `graphiant_local_extranet` | Manage Local Extranet policies (create/update/delete); shares a LAN segment with other LAN segments across sites/branches within the same enterprise; policy auto-applies to devices after create/update |
 | `graphiant_local_extranet_info` | Query Local Extranet info (policies summary, per-device rollout status, LAN segment usage, NAT usage) |
+| `graphiant_public_vif` | Manage gateway Public VIF / local data exchange services (create/update/delete); exposes a producer LAN segment (VRF) on Graphiant-managed gateway appliances to consumer LAN segments; no separate apply step |
+| `graphiant_public_vif_info` | Query Public VIF info (services summary, per-service details) |
 
 ## Installation
 
@@ -421,6 +424,7 @@ The collection includes ready-to-use example playbooks in the `playbooks/` direc
 | `nat_policy_management.yml` | NAT policy rulesets and LAN-segment attachments |
 | `prefix_port_list_management.yml` | Prefix and port lists |
 | `local_extranet_management.yml` | Local Extranet policies create/update/delete/query |
+| `public_vif_management.yml` | Public VIF (local data exchange) services create/update/delete/query |
 
 #### Data Exchange Workflows
 
@@ -473,6 +477,8 @@ ansible-doc graphiant.naas.graphiant_backbone
 ansible-doc graphiant.naas.graphiant_prefix_port_list.py
 ansible-doc graphiant.naas.graphiant_local_extranet
 ansible-doc graphiant.naas.graphiant_local_extranet_info
+ansible-doc graphiant.naas.graphiant_public_vif
+ansible-doc graphiant.naas.graphiant_public_vif_info
 ```
 
 ## Documentation
@@ -533,13 +539,13 @@ Use `ansible-playbook ... --check` or set `check_mode: true` on a task to run wi
 
 | Support | Modules | Behavior |
 |--------|---------|----------|
-| **Full** | `graphiant_interfaces`, `graphiant_vrrp`, `graphiant_dhcp_relay`, `graphiant_lag_interfaces`, `graphiant_sites`, `graphiant_site_to_site_vpn`, `graphiant_global_config`, `graphiant_static_routes`, `graphiant_ospfv2`, `graphiant_ntp`, `graphiant_device_system`, `graphiant_edge_services`, `graphiant_macsec`, `graphiant_data_exchange`, `graphiant_data_exchange_info`, `graphiant_prefix_port_list`, `graphiant_traffic_policy`, `graphiant_security_policy`, `graphiant_nat_policy`, `graphiant_local_extranet` | Mutating writes are skipped. Intended requests are usually logged with a `[check_mode]` prefix; use `detailed_logs: true` and often `ANSIBLE_STDOUT_CALLBACK=debug` for readable output. |
+| **Full** | `graphiant_interfaces`, `graphiant_vrrp`, `graphiant_dhcp_relay`, `graphiant_lag_interfaces`, `graphiant_sites`, `graphiant_site_to_site_vpn`, `graphiant_global_config`, `graphiant_static_routes`, `graphiant_ospfv2`, `graphiant_ntp`, `graphiant_device_system`, `graphiant_edge_services`, `graphiant_macsec`, `graphiant_data_exchange`, `graphiant_data_exchange_info`, `graphiant_prefix_port_list`, `graphiant_traffic_policy`, `graphiant_security_policy`, `graphiant_nat_policy`, `graphiant_local_extranet`, `graphiant_public_vif` | Mutating writes are skipped. Intended requests are usually logged with a `[check_mode]` prefix; use `detailed_logs: true` and often `ANSIBLE_STDOUT_CALLBACK=debug` for readable output. |
 | **Partial** | `graphiant_bgp`, `graphiant_device_config`, `graphiant_backbone`                                                                                                                                                                                                                                                                    | Writes are still skipped, but `changed` is not computed from a full live diff: BGP reports `changed: true` for configure/deconfigure/detach in check mode; `graphiant_device_config` returns `changed: false` for `show_validated_payload` and `changed: true` for `configure`; `graphiant_backbone` reports `changed: true` whenever the supplied config file contains matching backbone resources (no live diff against current Core device state). See each module's `attributes.check_mode` details. |
-| **Read-only** | `graphiant_macsec_info` | Always read-only; check mode has no side effects. |
+| **Read-only** | `graphiant_macsec_info`, `graphiant_public_vif_info` | Always read-only; check mode has no side effects. |
 
-**Full-mode nuances:** `graphiant_device_system`, `graphiant_edge_services`, `graphiant_macsec`, `graphiant_dhcp_relay`, `graphiant_traffic_policy`, `graphiant_security_policy`, `graphiant_nat_policy`, and `graphiant_local_extranet` read device state in check mode and set `changed` from whether an apply would be needed. For `graphiant_nat_policy`, the segment attachment safety check and absent no-op pruning are skipped in check mode so that a full deconfigure workflow (detach + deconfigure) can be previewed with `--check --diff` without running the real detach step first. For LWS, omit `localWebServerPasswordForce` after a successful set—force re-pushes every run because the portal stores a hash. `graphiant_data_exchange_info` and `graphiant_macsec_info` are always read-only. `graphiant_data_exchange` skips mutating writes in check mode; see that module's `attributes.check_mode` for details.
+**Full-mode nuances:** `graphiant_device_system`, `graphiant_edge_services`, `graphiant_macsec`, `graphiant_dhcp_relay`, `graphiant_traffic_policy`, `graphiant_security_policy`, `graphiant_nat_policy`, and `graphiant_local_extranet` read device state in check mode and set `changed` from whether an apply would be needed. For `graphiant_nat_policy`, the segment attachment safety check and absent no-op pruning are skipped in check mode so that a full deconfigure workflow (detach + deconfigure) can be previewed with `--check --diff` without running the real detach step first. For LWS, omit `localWebServerPasswordForce` after a successful set—force re-pushes every run because the portal stores a hash. `graphiant_data_exchange_info`, `graphiant_macsec_info`, and `graphiant_public_vif_info` are always read-only. `graphiant_data_exchange` skips mutating writes in check mode; see that module's `attributes.check_mode` for details. `graphiant_public_vif` skips mutating writes in check mode and validates payloads against the SDK request models for `create_services`/`update_services`; `update_services` always reports `changed: true` (no live-state comparison — see the module's notes).
 
-**Diff mode (`--diff`):** `graphiant_device_system`, `graphiant_edge_services`, `graphiant_prefix_port_list`, `graphiant_macsec`, `graphiant_dhcp_relay`, `graphiant_traffic_policy`, `graphiant_security_policy`, `graphiant_nat_policy`, `graphiant_data_exchange`, `graphiant_ntp`, `graphiant_static_routes`, `graphiant_ospfv2`, `graphiant_local_extranet`, and `graphiant_site_to_site_vpn` support `--diff`. Use `--check --diff` or `--diff` to see `before`/`after` and `details.diff_plan`. For `graphiant_data_exchange`, diff is available for `create_services`, `update_services`, `create_customers`, and `update_customers`; in `--check --diff` mode, `create_customers` also surfaces `adminEmails` drift on existing customers with a hint to use `update_customers`. For `graphiant_site_to_site_vpn`, secrets (`presharedKey`, `md5Password`) are redacted in diff output. For `graphiant_dhcp_relay`, diff shows per-interface relay server lists under `edge.interfaces`.
+**Diff mode (`--diff`):** `graphiant_device_system`, `graphiant_edge_services`, `graphiant_prefix_port_list`, `graphiant_macsec`, `graphiant_dhcp_relay`, `graphiant_traffic_policy`, `graphiant_security_policy`, `graphiant_nat_policy`, `graphiant_data_exchange`, `graphiant_ntp`, `graphiant_static_routes`, `graphiant_ospfv2`, `graphiant_local_extranet`, `graphiant_public_vif`, and `graphiant_site_to_site_vpn` support `--diff`. Use `--check --diff` or `--diff` to see `before`/`after` and `details.diff_plan`. For `graphiant_data_exchange`, diff is available for `create_services`, `update_services`, `create_customers`, and `update_customers`; in `--check --diff` mode, `create_customers` also surfaces `adminEmails` drift on existing customers with a hint to use `update_customers`. For `graphiant_site_to_site_vpn`, secrets (`presharedKey`, `md5Password`) are redacted in diff output. For `graphiant_dhcp_relay`, diff shows per-interface relay server lists under `edge.interfaces`. For `graphiant_public_vif`, `update_services` diff always shows an empty `before` (no live-state comparison is performed) and the full payload as `after`.
 
 **Example: run playbooks in check mode (dry run)**
 
@@ -603,6 +609,7 @@ Modules are designed to be idempotent where possible and to report `changed` acc
 - **Traffic, security, and NAT policies**: `graphiant_traffic_policy`, `graphiant_security_policy`, and `graphiant_nat_policy` compare intended rulesets (and segment or zone-pair attachments) to live device state and skip the push when already matched. Use `--check` to preview whether changes would be made and `--diff` to see per-rule deltas in `details.diff_plan`. For `graphiant_nat_policy`, absent ruleset/rule entries that do not exist on the device are pruned from the payload (no-ops skipped); deleting a ruleset still referenced by LAN segments raises an error — detach segments first.
 - **Data Exchange operations**: All Data Exchange operations are idempotent. `create_services` and `create_customers` skip already-existing resources (`changed: false`, `skipped` non-empty). `match_service_to_customers` skips already-matched pairs. `delete_customers` and `delete_services` skip already-absent resources. `accept_invitation` skips already-linked consumers. Re-running any workflow playbook is safe.
 - **Local Extranet policies**: `create_policies` and `delete_policies` skip already-existing/already-absent policies (`changed: false`). `update_policies` compares the intended policy (prefix sets, sites, excluded devices, target segments, all normalized) to live device state and skips the push when already matched. Use `--check` to preview and `--diff` for per-policy before/after in `details.diff_plan`.
+- **Public VIF services**: `create_services` and `delete_services` skip already-existing/already-absent services (`changed: false`, matched by `serviceName`). `update_services` is a full PUT replace (not a merge/patch — see `sample_public_vif_services_update.yaml`) and does NOT compare against live service state — every run pushes the full desired payload and reports `changed: true`, the same documented behavior as `graphiant_bgp`/`graphiant_device_config` configure operations.
 
 **Summary:**
 - Run deconfigure and Data Exchange delete tasks repeatedly without concern; they are idempotent.
@@ -706,6 +713,7 @@ Configuration files use YAML format with optional Jinja2 templating. Sample file
 - `sample_sites.yaml` - Site configurations
 - `sample_prefix_and_port_list.yaml` - Network Prefix and Port configuration
 - `sample_local_extranet_policies.yaml` / `sample_local_extranet_policies_update.yaml` - Local Extranet policy configuration (`local_extranet_policies` list: shared segment, branch segments, optional prefix-set restrictions)
+- `sample_public_vif_services.yaml` / `sample_public_vif_services_update.yaml` - Public VIF (local data exchange) service configuration (`public_vif_services` list: producer LAN segment/region/storage provider, consumer LAN segments, gateway BGP neighbors, NAT prefix strategy); every field documented Required/Optional; the update sample adds a second gateway BGP neighbor and notes that `update_services` fully replaces the existing service config
 
 ### Config File Path Resolution
 

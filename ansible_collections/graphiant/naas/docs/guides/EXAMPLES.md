@@ -3956,6 +3956,139 @@ ansible-playbook playbooks/local_extranet_management.yml --tags delete
 
 A policy not found by `name` is skipped (idempotent).
 
+## Public VIF Workflows
+
+Public VIF ("local data exchange") exposes a producer LAN segment (VRF) on Graphiant-managed
+gateway appliances, in a chosen region/storage provider, to one or more consumer LAN segments.
+Unlike [Local Extranet Workflows](#local-extranet-workflows) and Data Exchange, there is no
+separate apply/rollout step — the gateway appliances host the service directly once created. Also
+unlike Local Extranet, `update_services` is a full PUT replace, not a merge: any field,
+`gatewayBgpNeighbors` entry, `consumerLanSegments` entry, or `natPrefixStrategy` entry omitted from
+the update config is removed from the live service, and every update reports `changed: true`
+unconditionally — there is no live-state comparison before the push.
+
+### Step 1: Create Public VIF services
+
+```bash
+ansible-playbook playbooks/public_vif_management.yml --tags create --check --diff
+ansible-playbook playbooks/public_vif_management.yml --tags create
+```
+
+```yaml
+- name: Create Public VIF services
+  graphiant.naas.graphiant_public_vif:
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    operation: create_services
+    config_file: "sample_public_vif_services.yaml"
+    vault_public_vif_bgp_md5_passwords: "{{ vault_public_vif_bgp_md5_passwords | default({}) }}"
+    detailed_logs: true
+  register: create_services_result
+
+- name: Display service creation result
+  ansible.builtin.debug:
+    msg: "{{ create_services_result.msg }}"
+```
+
+Each service entry requires `serviceName`, `lanSegment` (producer LAN segment name, resolved to
+ID), `region` (name, resolved to ID), and `storageProvider`; at least one `gatewayBgpNeighbors`
+entry (keyed by gateway device name or raw device ID); a matching `natPrefixStrategy` entry for
+every `gatewayBgpNeighbors` key (device name/ID → advertised public CIDR — always sent as
+centralized NAT); and at least one `consumerLanSegments` entry (keyed by consumer LAN segment
+name). Optional `coveringPrefixes` restricts which prefixes are advertised over the Public VIF
+(validated as proper CIDR network addresses); optional `advertisement.sites`/
+`advertisement.siteLists` scopes which sites may consume the service — omitting `advertisement`
+entirely allows advertisement to all symmetric sites.
+
+Before a service is created (or updated), three checks run against live device state so a bad
+reference fails fast instead of silently targeting the wrong gateway/VRF: every
+`gatewayBgpNeighbors` key must be a gateway appliance actually provisioned for the resolved
+region/storageProvider; each neighbor's `localInterface` must be a real subinterface already
+configured on that device (a main interface, e.g. `GigabitEthernet6/0/0` without a VLAN suffix, is
+not valid here); and the resolved `lanSegment` must already be configured on those same gateway
+devices.
+
+A neighbor's `md5Password` can be a plain string in the YAML, or left `null`/omitted so it's filled
+from `vault_public_vif_bgp_md5_passwords` (keyed by service name, then by the same device
+name/ID used as the `gatewayBgpNeighbors` key) — the YAML value always wins over the vault when
+both are present. Regardless of source, `md5Password` is redacted as `********` in logs and
+`--diff` output.
+
+An existing service (matched by `serviceName`) is skipped (idempotent).
+
+### Step 2: Update Public VIF services
+
+`sample_public_vif_services_update.yaml` carries `gateway-1` over unchanged from the create sample
+and adds a second, fully-configured `gatewayBgpNeighbors` entry (`gateway-2`) — since this is a
+full replace, omitting an existing neighbor (or a `consumerLanSegments`/`natPrefixStrategy` entry)
+from the update payload would remove it from the live service.
+
+```bash
+ansible-playbook playbooks/public_vif_management.yml --tags update --check --diff
+ansible-playbook playbooks/public_vif_management.yml --tags update
+```
+
+```yaml
+- name: Update Public VIF services
+  graphiant.naas.graphiant_public_vif:
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    operation: update_services
+    config_file: "sample_public_vif_services_update.yaml"
+    vault_public_vif_bgp_md5_passwords: "{{ vault_public_vif_bgp_md5_passwords | default({}) }}"
+    detailed_logs: true
+  register: update_services_result
+```
+
+The service must already exist; use `create_services` for new services. Unlike Local Extranet's
+update, there is no live-state comparison here — the full resolved payload is always pushed and
+`changed: true` is always reported, so `--diff` shows an empty `before` and the full payload as
+`after`.
+
+### Step 3: Query services
+
+```bash
+ansible-playbook playbooks/public_vif_management.yml --tags query
+```
+
+```yaml
+- name: Get Public VIF services summary
+  graphiant.naas.graphiant_public_vif_info:
+    <<: *graphiant_client_params
+    query: services_summary
+    detailed_logs: true
+  register: services_summary_result
+
+- name: Get details for a Public VIF service
+  graphiant.naas.graphiant_public_vif_info:
+    <<: *graphiant_client_params
+    query: service_details
+    service_name: "pvif-service-1"
+    detailed_logs: true
+  register: service_details_result
+```
+
+### Step 4: Delete Public VIF services
+
+```bash
+ansible-playbook playbooks/public_vif_management.yml --tags delete
+```
+
+```yaml
+- name: Delete Public VIF services
+  graphiant.naas.graphiant_public_vif:
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    operation: delete_services
+    config_file: "sample_public_vif_services.yaml"
+  register: delete_services_result
+```
+
+A service not found by `serviceName` is skipped (idempotent).
+
 ## Raw Device Configuration (graphiant_device_config)
 
 `graphiant_device_config` is a **generic, low-level module** that pushes any JSON payload directly to the Graphiant device config API (`PUT /v1/devices/{id}/config`). Use it as an escape hatch when the structured modules (`graphiant_interfaces`, `graphiant_ntp`, etc.) do not yet cover a specific configuration field — anything the Portal UI can configure can be pushed with this module.

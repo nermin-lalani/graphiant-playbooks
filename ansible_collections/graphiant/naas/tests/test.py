@@ -1769,6 +1769,108 @@ class TestGraphiantPlaybooks(unittest.TestCase):
         self.assertTrue(result2["skipped"], f"Expected policies to be skipped, got: {result2}")
         self.assertFalse(result2["deleted"], f"Expected no policies to be deleted, got: {result2}")
 
+    def test_create_public_vif_services(self):
+        """
+        Create Public VIF services. Loads vault_public_vif_bgp_md5_passwords from
+        vault_secrets.yml.example (same pattern as test_create_site_to_site_vpn).
+
+        Second run should be idempotent (changed=False, skipped, nothing created) since
+        create_services skips services that already exist by name.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+        config_path = graphiant_config.config_utils.config_path
+        vault_md5 = vault_dict_from_example(config_path, "vault_public_vif_bgp_md5_passwords")
+
+        result = graphiant_config.public_vif.create_services(
+            "sample_public_vif_services.yaml",
+            vault_public_vif_bgp_md5_passwords=vault_md5,
+        )
+        LOG.info("Create Public VIF services result: %s", result)
+
+        result2 = graphiant_config.public_vif.create_services(
+            "sample_public_vif_services.yaml",
+            vault_public_vif_bgp_md5_passwords=vault_md5,
+        )
+        LOG.info("Create Public VIF services result (idempotency check): %s", result2)
+        self.assertFalse(result2["changed"], f"Expected no change on idempotent create_services, got: {result2}")
+        self.assertTrue(result2["skipped"], f"Expected services to be skipped, got: {result2}")
+        self.assertFalse(result2["created"], f"Expected no new services to be created, got: {result2}")
+
+    def test_get_public_vif_services_summary(self):
+        """
+        Get Public VIF services summary.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+        result = graphiant_config.public_vif.get_services_summary()
+        LOG.info("Public VIF services summary: %s", result)
+
+    def test_get_public_vif_service_details(self):
+        """
+        Get detailed configuration for the Public VIF service created above.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+        result = graphiant_config.public_vif.get_service_details("pvif-service-1")
+        LOG.info("Public VIF service details: %s", result)
+
+    def test_update_public_vif_services(self):
+        """
+        Update Public VIF services (adds a second gatewayBgpNeighbors entry for gateway-2).
+
+        No live-state diff is performed for this operation (see public_vif_manager module
+        docstring): every run pushes the full payload and reports changed=True, regardless
+        of whether the desired state already matches — unlike create_services/delete_services.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+        config_path = graphiant_config.config_utils.config_path
+        vault_md5 = vault_dict_from_example(config_path, "vault_public_vif_bgp_md5_passwords")
+
+        result = graphiant_config.public_vif.update_services(
+            "sample_public_vif_services_update.yaml",
+            vault_public_vif_bgp_md5_passwords=vault_md5,
+        )
+        LOG.info("Update Public VIF services result: %s", result)
+        self.assertTrue(result["changed"], f"Expected update to report changed, got: {result}")
+
+        result2 = graphiant_config.public_vif.update_services(
+            "sample_public_vif_services_update.yaml",
+            vault_public_vif_bgp_md5_passwords=vault_md5,
+        )
+        LOG.info("Update Public VIF services result (rerun check): %s", result2)
+        self.assertTrue(result2["changed"], f"Expected rerun to also report changed, got: {result2}")
+
+    def test_update_public_vif_services_restore(self):
+        """
+        Restore Public VIF services to their original (pre-update) configuration.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+        config_path = graphiant_config.config_utils.config_path
+        vault_md5 = vault_dict_from_example(config_path, "vault_public_vif_bgp_md5_passwords")
+
+        result = graphiant_config.public_vif.update_services(
+            "sample_public_vif_services.yaml",
+            vault_public_vif_bgp_md5_passwords=vault_md5,
+        )
+        LOG.info("Restore Public VIF services result: %s", result)
+        self.assertTrue(result["changed"], f"Expected restore to report changed, got: {result}")
+
+    def test_delete_public_vif_services(self):
+        """
+        Delete Public VIF services.
+
+        Second run should be idempotent (changed=False, skipped, nothing deleted) since
+        delete_services skips services that are not found.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+
+        result = graphiant_config.public_vif.delete_services("sample_public_vif_services.yaml")
+        LOG.info("Delete Public VIF services result: %s", result)
+
+        result2 = graphiant_config.public_vif.delete_services("sample_public_vif_services.yaml")
+        LOG.info("Delete Public VIF services result (idempotency check): %s", result2)
+        self.assertFalse(result2["changed"], f"Expected no change on idempotent delete_services, got: {result2}")
+        self.assertTrue(result2["skipped"], f"Expected services to be skipped, got: {result2}")
+        self.assertFalse(result2["deleted"], f"Expected no services to be deleted, got: {result2}")
+
     def test_show_validated_payload_for_device_config(self):
         """
         Show validated payload for device configuration.
@@ -3187,6 +3289,18 @@ if __name__ == '__main__':
     suite.addTest(TestGraphiantPlaybooks('test_update_local_extranet_policies_restore'))
     suite.addTest(TestGraphiantPlaybooks('test_delete_local_extranet_policies'))
 
+    # Public VIF (gateway "local data exchange") Tests
+    # Failure is expected unless the gateway devices referenced in
+    # sample_public_vif_services.yaml (gatewayBgpNeighbors/natPrefixStrategy) already have the
+    # Public VIF gateway service enabled, are already configured on the producer 'lanSegment',
+    # and their referenced localInterface is already configured on that same LAN segment.
+    suite.addTest(TestGraphiantPlaybooks('test_create_public_vif_services'))
+    suite.addTest(TestGraphiantPlaybooks('test_get_public_vif_services_summary'))
+    suite.addTest(TestGraphiantPlaybooks('test_get_public_vif_service_details'))
+    suite.addTest(TestGraphiantPlaybooks('test_update_public_vif_services'))
+    suite.addTest(TestGraphiantPlaybooks('test_update_public_vif_services_restore'))
+    suite.addTest(TestGraphiantPlaybooks('test_delete_public_vif_services'))
+
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_global_config_graphiant_filters'))
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_global_config_prefix_lists'))
 
@@ -3260,6 +3374,7 @@ if __name__ == '__main__':
     # Device Configuration Management Tests
     suite.addTest(TestGraphiantPlaybooks('test_show_validated_payload_for_device_config'))
     suite.addTest(TestGraphiantPlaybooks('test_configure_device_config'))
+
     '''
     # Backbone (Core) Configuration Management Tests
     suite.addTest(TestGraphiantPlaybooks('test_configure_backbone'))

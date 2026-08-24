@@ -2691,6 +2691,298 @@ class GraphiantPortalClient:
             )
             raise e
 
+    def create_public_vif_service(self, service_config: dict) -> dict:
+        """
+        Create a new gateway Public VIF service ("local data exchange service").
+
+        POST /v1/pvif (bound in graphiant-sdk >= 26.7.0 as ``v1_pvif_post``). A Public VIF
+        service is a flat, single-resource CRUD object (an ``id``) hosted entirely on
+        Graphiant-managed gateway appliances in a chosen region/storage provider — unlike
+        Local Extranet/Data Exchange there is no separate apply/rollout step.
+
+        Args:
+            service_config (dict): Service configuration (``ManaV2PublicVifGatewayWriteRequest``
+                shape: serviceName, lanSegmentId, regionId, storageProvider,
+                consumerLanSegments, gatewayBgpNeighbors, natPrefixStrategy, optional
+                coveringPrefixes/advertisement) with names already resolved to IDs.
+
+        Returns:
+            dict: Created service response (contains "id").
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/pvif"
+        if getattr(self, "check_mode", False):
+            # Validate against the real SDK request model so schema mismatches / a too-old
+            # installed graphiant-sdk surface in check mode too (see create_local_extranet_policy).
+            try:
+                validated_payload_dict = graphiant_sdk.V1PvifPostRequest.model_validate(service_config).to_dict()
+            except Exception as sdk_e:
+                raise ValidationError(
+                    f"create_public_vif_service: Payload failed SDK schema validation: {sdk_e}"
+                ) from sdk_e
+            LOG.info(
+                "[check_mode] create_public_vif_service would create: %s",
+                json.dumps(validated_payload_dict, indent=2),
+            )
+            return {"id": 0}
+        try:
+            LOG.info("create_public_vif_service: Creating service '%s'", service_config.get("serviceName"))
+            response = self.api.v1_pvif_post(authorization=self.bearer_token, v1_pvif_post_request=service_config)
+            result = response.model_dump(by_alias=True, exclude_none=True)
+            LOG.info("create_public_vif_service: Successfully created service with ID: %s", result.get("id"))
+            return result
+        except ApiException as e:
+            self._log_api_error(
+                method_name="create_public_vif_service", api_url=api_url, request_body=service_config, exception=e
+            )
+            raise e
+
+    def get_public_vif_services_summary(self) -> list:
+        """
+        Get summary of all gateway Public VIF services.
+
+        GET /v1/pvif/summary (bound as ``v1_pvif_summary_get``).
+
+        Returns:
+            list: ManaV2PublicVifSummary entries (empty list if none found).
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/pvif/summary"
+        try:
+            LOG.info("get_public_vif_services_summary: Retrieving Public VIF services summary")
+            response = self.api.v1_pvif_summary_get(authorization=self.bearer_token)
+            summary = response.summary if response and response.summary else []
+            LOG.info("get_public_vif_services_summary: Successfully retrieved %s service(s)", len(summary))
+            return summary
+        except ApiException as e:
+            self._log_api_error(method_name="get_public_vif_services_summary", api_url=api_url, exception=e)
+            return []
+
+    def get_public_vif_service_by_name(self, service_name: str):
+        """
+        Find a gateway Public VIF service by name via the summary list.
+
+        Args:
+            service_name (str): Name of the service to retrieve.
+
+        Returns:
+            ManaV2PublicVifSummary or None: Matching summary entry if found, None otherwise.
+        """
+        try:
+            LOG.info("get_public_vif_service_by_name: Looking for service '%s'", service_name)
+            for service in self.get_public_vif_services_summary():
+                if service.service_name == service_name:
+                    LOG.info("get_public_vif_service_by_name: Found service '%s' with ID: %s", service_name, service.id)
+                    return service
+            LOG.info("get_public_vif_service_by_name: Service '%s' not found", service_name)
+            return None
+        except Exception as e:
+            LOG.error("get_public_vif_service_by_name: Error finding service '%s': %s", service_name, e)
+            return None
+
+    def get_public_vif_service_details(self, service_id: int) -> dict:
+        """
+        Get detailed configuration for a specific gateway Public VIF service.
+
+        GET /v1/pvif/{id}/details (bound as ``v1_pvif_id_details_get``).
+
+        Args:
+            service_id (int): ID of the service to retrieve.
+
+        Returns:
+            dict: Service details.
+        """
+        try:
+            LOG.info("get_public_vif_service_details: Retrieving service ID %s", service_id)
+            response = self.api.v1_pvif_id_details_get(authorization=self.bearer_token, id=service_id)
+            details = response.model_dump(by_alias=True, exclude_none=True) if response else {}
+            LOG.info("get_public_vif_service_details: Successfully retrieved service ID %s", service_id)
+            return details
+        except ApiException as e:
+            api_url = f"{self.api.api_client.configuration.host}/v1/pvif/{service_id}/details"
+            self._log_api_error(
+                method_name="get_public_vif_service_details",
+                api_url=api_url,
+                path_params={"id": service_id},
+                exception=e,
+            )
+            raise e
+
+    def edit_public_vif_service(self, service_id: int, service_config: dict) -> dict:
+        """
+        Update an existing gateway Public VIF service.
+
+        PUT /v1/pvif/{id} (bound as ``v1_pvif_id_put``).
+
+        Args:
+            service_id (int): ID of the service to update.
+            service_config (dict): Full desired service configuration (names already
+                resolved to IDs) — becomes the ``configuration`` body of ``V1PvifIdPutRequest``.
+
+        Returns:
+            dict: Updated service response (contains "id").
+        """
+        request_body = {"configuration": service_config}
+        api_url = f"{self.api.api_client.configuration.host}/v1/pvif/{service_id}"
+        if getattr(self, "check_mode", False):
+            try:
+                validated_payload_dict = graphiant_sdk.V1PvifIdPutRequest.model_validate(request_body).to_dict()
+            except Exception as sdk_e:
+                raise ValidationError(
+                    f"edit_public_vif_service: Payload failed SDK schema validation: {sdk_e}"
+                ) from sdk_e
+            LOG.info(
+                "[check_mode] edit_public_vif_service would update service ID %s: %s",
+                service_id,
+                json.dumps(validated_payload_dict, indent=2),
+            )
+            return {"id": service_id}
+        try:
+            LOG.info("edit_public_vif_service: Updating service ID %s", service_id)
+            response = self.api.v1_pvif_id_put(
+                authorization=self.bearer_token, id=service_id, v1_pvif_id_put_request=request_body
+            )
+            result = response.model_dump(by_alias=True, exclude_none=True)
+            result["id"] = service_id
+            LOG.info("edit_public_vif_service: Successfully updated service ID %s", service_id)
+            return result
+        except ApiException as e:
+            self._log_api_error(
+                method_name="edit_public_vif_service",
+                api_url=api_url,
+                path_params={"id": service_id},
+                request_body=request_body,
+                exception=e,
+            )
+            raise e
+
+    def delete_public_vif_service(self, service_id: int):
+        """
+        Delete a gateway Public VIF service.
+
+        DELETE /v1/pvif/{id} (bound as ``v1_pvif_id_delete``).
+
+        Args:
+            service_id (int): ID of the service to delete.
+
+        Returns:
+            API response.
+        """
+        if getattr(self, "check_mode", False):
+            LOG.info("[check_mode] delete_public_vif_service would delete service with ID: %s", service_id)
+            return type("MockResponse", (), {})()
+        try:
+            LOG.info("delete_public_vif_service: Deleting service with ID: %s", service_id)
+            response = self.api.v1_pvif_id_delete(authorization=self.bearer_token, id=service_id)
+            LOG.info("delete_public_vif_service: Successfully deleted service with ID: %s", service_id)
+            return response
+        except ApiException as e:
+            api_url = f"{self.api.api_client.configuration.host}/v1/pvif/{service_id}"
+            self._log_api_error(
+                method_name="delete_public_vif_service",
+                api_url=api_url,
+                path_params={"id": service_id},
+                exception=e,
+            )
+            raise e
+
+    def get_public_vif_gateways(self, region_id: int, storage_provider: str) -> list:
+        """
+        List Graphiant-managed gateway appliances provisioned for a region/storage provider.
+
+        GET /v1/regions/{region_id}/gateways?regionId=<region_id>&storageProvider=<storage_provider>
+        (bound as ``v1_regions_region_id_gateways_get``). Used to validate that a Public VIF
+        service's ``gatewayBgpNeighbors`` device IDs are actual gateway appliances available
+        for that service's region/storage provider, rather than failing confusingly at the API.
+
+        Args:
+            region_id (int): Graphiant region ID.
+            storage_provider (str): Storage provider (e.g. "AWS").
+
+        Returns:
+            list: V1RegionsRegionIdGatewaysGetResponseGateway entries (``device_id``,
+                ``hostname``); empty list if none are provisioned.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/regions/{region_id}/gateways"
+        try:
+            LOG.info(
+                "get_public_vif_gateways: Retrieving gateway appliances for region %s / storage provider %s",
+                region_id,
+                storage_provider,
+            )
+            response = self.api.v1_regions_region_id_gateways_get(
+                authorization=self.bearer_token, region_id=region_id, storage_provider=storage_provider
+            )
+            gateways = response.gateways if response and response.gateways else []
+            LOG.info("get_public_vif_gateways: Found %s gateway appliance(s)", len(gateways))
+            return gateways
+        except ApiException as e:
+            self._log_api_error(
+                method_name="get_public_vif_gateways",
+                api_url=api_url,
+                query_params={"regionId": region_id, "storageProvider": storage_provider},
+                exception=e,
+            )
+            raise e
+
+    def get_lan_segments_for_gateways(self, device_ids: list, gateway_cloud_provider: str) -> list:
+        """
+        Get LAN segments (VRFs) configured on a specific set of gateway devices for a storage
+        provider.
+
+        GET /v1/lan-segments?deviceIds[0]=<id>&deviceIds[1]=<id>&...&gatewayCloudProvider=<provider>
+        — called via a raw API request rather than the SDK-bound ``v1_lan_segments_get``: that
+        method serializes ``device_ids=[...]`` using collection format ``"multi"`` (bare
+        repeated ``deviceIds=<id>`` query keys), which the live backend rejects for this
+        endpoint — the same ``"multi"`` vs indexed-bracket rejection already documented for
+        ``get_lan_segment_site_device_map``. The backend only accepts the indexed-bracket form
+        ``deviceIds[0]=<id>`` used here.
+
+        Used to validate that a Public VIF service's producer ``lanSegment`` is actually
+        configured on the ``gatewayBgpNeighbors`` devices for the service's storage provider,
+        rather than merely existing somewhere else in the tenant.
+
+        Args:
+            device_ids (list): Gateway appliance device IDs.
+            gateway_cloud_provider (str): Storage provider (e.g. "AWS").
+
+        Returns:
+            list: ManaV2Vrf entries (``id``, ``name``, ...); empty list if none found.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/lan-segments"
+        query_params = {f"deviceIds[{i}]": device_id for i, device_id in enumerate(device_ids)}
+        query_params["gatewayCloudProvider"] = gateway_cloud_provider
+        try:
+            LOG.info(
+                "get_lan_segments_for_gateways: Retrieving LAN segments for devices %s / provider %s",
+                device_ids,
+                gateway_cloud_provider,
+            )
+            api_client = self.api.api_client
+            method, url, header_params, body, post_params = api_client.param_serialize(
+                "GET",
+                "/v1/lan-segments",
+                query_params=query_params,
+                header_params={
+                    "Authorization": self.bearer_token,
+                    "Accept": "application/json",
+                },
+                body=None,
+            )
+            response_data = api_client.call_api(method, url, header_params, body, post_params)
+            response_data.read()
+            self._raise_for_raw_status(response_data)
+            raw = json.loads(response_data.data)
+            segments = [graphiant_sdk.ManaV2Vrf.model_validate(item) for item in raw.get("segments") or []]
+            LOG.info("get_lan_segments_for_gateways: Found %s LAN segment(s)", len(segments))
+            return segments
+        except ApiException as e:
+            self._log_api_error(
+                method_name="get_lan_segments_for_gateways",
+                api_url=api_url,
+                query_params=query_params,
+                exception=e,
+            )
+            raise e
+
     def get_ipsec_inside_subnet(self, region_id, lan_segment_id, address_family):
         """
         Get IPSec inside subnet for a specific region and LAN segment.

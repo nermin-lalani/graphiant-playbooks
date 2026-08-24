@@ -12,6 +12,7 @@ from .global_config_manager import GlobalConfigManager
 from .site_manager import SiteManager
 from .data_exchange_manager import DataExchangeManager
 from .local_extranet_manager import LocalExtranetManager
+from .public_vif_manager import PublicVifManager
 from .device_config_manager import DeviceConfigManager
 from .vrrp_interface_manager import VRRPInterfaceManager
 from .dhcp_relay_interface_manager import DhcpRelayInterfaceManager
@@ -88,6 +89,7 @@ class GraphiantConfig:
             self.sites = SiteManager(self.config_utils)
             self.data_exchange = DataExchangeManager(self.config_utils)
             self.local_extranet = LocalExtranetManager(self.config_utils)
+            self.public_vif = PublicVifManager(self.config_utils)
             self.device_config = DeviceConfigManager(self.config_utils)
             self.vrrp_interfaces = VRRPInterfaceManager(self.config_utils)
             self.dhcp_relay_interfaces = DhcpRelayInterfaceManager(self.config_utils)
@@ -125,6 +127,7 @@ class GraphiantConfig:
             "sites": hasattr(self, "sites") and self.sites is not None,
             "data_exchange": hasattr(self, "data_exchange") and self.data_exchange is not None,
             "local_extranet": hasattr(self, "local_extranet") and self.local_extranet is not None,
+            "public_vif": hasattr(self, "public_vif") and self.public_vif is not None,
             "device_config": hasattr(self, "device_config") and self.device_config is not None,
             "vrrp_interfaces": hasattr(self, "vrrp_interfaces") and self.vrrp_interfaces is not None,
             "dhcp_relay_interfaces": hasattr(self, "dhcp_relay_interfaces") and self.dhcp_relay_interfaces is not None,
