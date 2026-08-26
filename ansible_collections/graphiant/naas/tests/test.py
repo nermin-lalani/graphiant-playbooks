@@ -1984,6 +1984,36 @@ class TestGraphiantPlaybooks(unittest.TestCase):
         LOG.info("Deconfigure OSPFv2 result (idempotency check): %s", result2)
         assert result2['changed'] is False, "Deconfigure OSPFv2 idempotency failed"
 
+    def test_configure_data_assurance(self):
+        """
+        Configure Data Assurance policies (assurance, protection-by-URL, and protection-by-category
+        content-filter policies) from the sample YAML.
+
+        Second run should be idempotent (changed=False) if desired state already matches.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+
+        result = graphiant_config.data_assurance.configure("sample_data_assurance_policies.yaml")
+        LOG.info("Configure Data Assurance result: %s", result)
+        result2 = graphiant_config.data_assurance.configure("sample_data_assurance_policies.yaml")
+        LOG.info("Configure Data Assurance result (idempotency check): %s", result2)
+        assert result2['changed'] is False, "Configure Data Assurance idempotency failed"
+
+    def test_deconfigure_data_assurance(self):
+        """
+        Deconfigure (delete) Data Assurance and content-filter policies listed in the sample YAML.
+
+        Deletion detaches sites (and clears apps/rules) before removing each policy.
+        Second run should be idempotent (changed=False) when the policies are already absent.
+        """
+        graphiant_config = graphiant_config_from_read_config()
+
+        result = graphiant_config.data_assurance.deconfigure("sample_data_assurance_policies.yaml")
+        LOG.info("Deconfigure Data Assurance result: %s", result)
+        result2 = graphiant_config.data_assurance.deconfigure("sample_data_assurance_policies.yaml")
+        LOG.info("Deconfigure Data Assurance result (idempotency check): %s", result2)
+        assert result2['changed'] is False, "Deconfigure Data Assurance idempotency failed"
+
     def test_configure_global_ntp(self):
         """
         Configure Global NTP objects.
@@ -3367,6 +3397,15 @@ if __name__ == '__main__':
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_ospfv2'))
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_interfaces'))
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_global_lan_segments'))
+
+    '''
+    # Traffic in needed in order to configure.
+    # Data Assurance & Content-Filter (protection) Policy Tests
+    # Pre-req: site list referenced by assurance-policy-1 (siteListName) and flex-algos used
+    # in the sample must exist in the target enterprise.
+    suite.addTest(TestGraphiantPlaybooks('test_configure_data_assurance'))
+    suite.addTest(TestGraphiantPlaybooks('test_deconfigure_data_assurance'))
+    '''
 
     # To deconfigure all interfaces
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_interfaces'))

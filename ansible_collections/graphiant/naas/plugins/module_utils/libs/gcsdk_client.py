@@ -3272,3 +3272,460 @@ class GraphiantPortalClient:
             raise APIError(
                 f"get_macsec_status: Failed to retrieve MACsec status for device_id={device_id}. Exception: {e}"
             )
+
+    # -------------------------------------------------------------------------
+    # Data Assurance
+    # -------------------------------------------------------------------------
+
+    def get_data_assurance_flex_algos(self) -> list:
+        """
+        List all available Data Assurance flex-algo entries for the current enterprise.
+
+        GET /v1/data/assurance/flex-algos
+
+        Returns:
+            list: V1DataAssuranceFlexAlgosGetResponseEntry entries (empty list on error).
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/data/assurance/flex-algos"
+        try:
+            LOG.info("get_data_assurance_flex_algos: Retrieving available flex-algos")
+            response = self.api.v1_data_assurance_flex_algos_get(authorization=self.bearer_token)
+            entries = response.entries or [] if response else []
+            LOG.info("get_data_assurance_flex_algos: Retrieved %s flex-algos", len(entries))
+            return entries
+        except ApiException as e:
+            self._log_api_error(method_name="get_data_assurance_flex_algos", api_url=api_url, exception=e)
+            return []
+
+    def get_data_assurance_policies(self) -> list:
+        """
+        List all Data Assurance policies for the current enterprise.
+
+        GET /v1/data/assurance/assurances/global
+
+        Returns:
+            list: V1DataAssuranceAssurancesGlobalGetResponseRow entries (empty list on error).
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/data/assurance/assurances/global"
+        try:
+            LOG.info("get_data_assurance_policies: Retrieving all Data Assurance policies")
+            response = self.api.v1_data_assurance_assurances_global_get(authorization=self.bearer_token)
+            rows = response.rows or [] if response else []
+            LOG.info("get_data_assurance_policies: Retrieved %s policies", len(rows))
+            return rows
+        except ApiException as e:
+            self._log_api_error(method_name="get_data_assurance_policies", api_url=api_url, exception=e)
+            return []
+
+    def get_data_assurance_policy_config(self, assurance_id: int):
+        """
+        Get the full ManaV2AssuranceConfig for a specific Data Assurance policy.
+
+        GET /v1/data/assurance/assurances/global/{id}
+
+        Args:
+            assurance_id (int): The assurance policy ID.
+
+        Returns:
+            ManaV2AssuranceConfig or None if not found.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/data/assurance/assurances/global/{assurance_id}"
+        try:
+            LOG.info("get_data_assurance_policy_config: Fetching config for assurance ID %s", assurance_id)
+            response = self.api.v1_data_assurance_assurances_global_id_get(
+                authorization=self.bearer_token, id=assurance_id
+            )
+            config = response.config if response else None
+            LOG.info("get_data_assurance_policy_config: Retrieved config for assurance ID %s", assurance_id)
+            return config
+        except ApiException as e:
+            self._log_api_error(
+                method_name="get_data_assurance_policy_config",
+                api_url=api_url,
+                path_params={"id": assurance_id},
+                exception=e,
+            )
+            return None
+
+    def create_data_assurance_policy(self, config: dict) -> dict:
+        """
+        Create a new Data Assurance policy.
+
+        POST /v1/data/assurance/assurances/global
+
+        Args:
+            config (dict): ManaV2AssuranceConfig fields (name, apps, flexAlgo,
+                lanNames, siteListId, useAllSites).
+
+        Returns:
+            dict: Response containing ``assuranceId``.
+        """
+        request_body = {"config": config}
+        api_url = f"{self.api.api_client.configuration.host}/v1/data/assurance/assurances/global"
+        if getattr(self, "check_mode", False):
+            try:
+                validated = graphiant_sdk.V1DataAssuranceAssurancesGlobalPostRequest.model_validate(
+                    request_body
+                ).to_dict()
+            except Exception as sdk_e:
+                raise ValidationError(
+                    f"create_data_assurance_policy: Payload failed SDK schema validation: {sdk_e}"
+                ) from sdk_e
+            LOG.info(
+                "[check_mode] create_data_assurance_policy would create: %s",
+                json.dumps(validated, indent=2),
+            )
+            return {"assuranceId": 0}
+        try:
+            LOG.info("create_data_assurance_policy: Creating policy '%s'", config.get("name"))
+            response = self.api.v1_data_assurance_assurances_global_post(
+                authorization=self.bearer_token,
+                v1_data_assurance_assurances_global_post_request=request_body,
+            )
+            assurance_id = getattr(response, "assurance_id", None) or getattr(response, "assuranceId", None)
+            LOG.info("create_data_assurance_policy: Created policy with ID %s", assurance_id)
+            return response.to_dict() if hasattr(response, "to_dict") else {"assuranceId": assurance_id}
+        except ApiException as e:
+            self._log_api_error(
+                method_name="create_data_assurance_policy",
+                api_url=api_url,
+                request_body=request_body,
+                exception=e,
+            )
+            raise e
+
+    def update_data_assurance_policy(self, assurance_id: int, config: dict) -> dict:
+        """
+        Overwrite an existing Data Assurance policy.
+
+        PUT /v1/data/assurance/assurances/global/{id}
+
+        Args:
+            assurance_id (int): The assurance policy ID.
+            config (dict): Full ManaV2AssuranceConfig replacement payload.
+
+        Returns:
+            dict: Response (may contain ``unsyncedDeviceNames``).
+        """
+        request_body = {"config": config}
+        api_url = f"{self.api.api_client.configuration.host}/v1/data/assurance/assurances/global/{assurance_id}"
+        if getattr(self, "check_mode", False):
+            LOG.info(
+                "[check_mode] update_data_assurance_policy would update ID %s: %s",
+                assurance_id,
+                json.dumps(request_body, indent=2),
+            )
+            return {}
+        try:
+            LOG.info("update_data_assurance_policy: Updating policy ID %s", assurance_id)
+            response = self.api.v1_data_assurance_assurances_global_id_put(
+                authorization=self.bearer_token,
+                id=assurance_id,
+                v1_data_assurance_assurances_global_id_put_request=request_body,
+            )
+            LOG.info("update_data_assurance_policy: Successfully updated policy ID %s", assurance_id)
+            return response.to_dict() if hasattr(response, "to_dict") else {}
+        except ApiException as e:
+            self._log_api_error(
+                method_name="update_data_assurance_policy",
+                api_url=api_url,
+                path_params={"id": assurance_id},
+                request_body=request_body,
+                exception=e,
+            )
+            raise e
+
+    def delete_data_assurance_policy(self, assurance_id: int) -> None:
+        """
+        Delete a Data Assurance policy by ID.
+
+        DELETE /v1/data/assurance/assurances/global/{id}
+
+        Args:
+            assurance_id (int): The assurance policy ID.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/data/assurance/assurances/global/{assurance_id}"
+        if getattr(self, "check_mode", False):
+            LOG.info("[check_mode] delete_data_assurance_policy would delete ID %s", assurance_id)
+            return
+        try:
+            LOG.info("delete_data_assurance_policy: Deleting policy ID %s", assurance_id)
+            self.api.v1_data_assurance_assurances_global_id_delete(authorization=self.bearer_token, id=assurance_id)
+            LOG.info("delete_data_assurance_policy: Successfully deleted policy ID %s", assurance_id)
+        except ApiException as e:
+            self._log_api_error(
+                method_name="delete_data_assurance_policy",
+                api_url=api_url,
+                path_params={"id": assurance_id},
+                exception=e,
+            )
+            raise e
+
+    def get_data_assurance_bucket_apps(self, bucket_id, time_window: dict) -> list:
+        """
+        List the applications observed/classified in a Data Assurance bucket (profile).
+
+        POST /v2/assurance/bucket_apps
+
+        This is telemetry: it returns the apps seen in the bucket over ``time_window``,
+        not a static catalog. The ``bucket_id`` is the AssuranceBucket enum *name* string
+        (e.g. ``"Graphiant_Assured"``) — i.e. the same value users pass as ``profileName``.
+
+        Args:
+            bucket_id: AssuranceBucket enum name (profileName), e.g. ``"General_Assured"``.
+            time_window (dict): ``{recentTs, oldTs, bucketSizeSec}`` window to query.
+
+        Returns:
+            list: AssuranceBucketApp entries (each has app_name, builtin_app_id,
+                custom_app_id, is_domain); empty list on error.
+        """
+        request_body = {"bucketId": bucket_id, "timeWindow": time_window}
+        api_url = f"{self.api.api_client.configuration.host}/v2/assurance/bucket-apps"
+        try:
+            LOG.info("get_data_assurance_bucket_apps: Retrieving apps for bucket '%s'", bucket_id)
+            response = self.api.v2_assurance_bucket_apps_post(
+                authorization=self.bearer_token,
+                v2_assurance_bucket_apps_post_request=request_body,
+            )
+            apps = (response.apps or []) if response else []
+            LOG.info("get_data_assurance_bucket_apps: Retrieved %s apps for bucket '%s'", len(apps), bucket_id)
+            return apps
+        except ApiException as e:
+            self._log_api_error(
+                method_name="get_data_assurance_bucket_apps",
+                api_url=api_url,
+                request_body=request_body,
+                exception=e,
+            )
+            return []
+
+    def get_data_assurance_bucket_app_servers(self, bucket_id, app_name: str, time_window: dict) -> list:
+        """
+        List the back-end servers observed for an application within a Data Assurance bucket.
+
+        POST /v2/assurance/bucket-app-servers
+
+        Like the bucket-apps query, this is telemetry over ``time_window``. ``bucket_id`` is the
+        AssuranceBucket enum *name* string (i.e. the ``profileName``).
+
+        Args:
+            bucket_id: AssuranceBucket enum name (profileName), e.g. ``"General_Assured"``.
+            app_name (str): The application name to scope servers to.
+            time_window (dict): ``{recentTs, oldTs, bucketSizeSec}`` window to query.
+
+        Returns:
+            list: AssuranceBucketAppServer entries (each has server_ip, server_port,
+                server_protocol); empty list on error.
+        """
+        request_body = {"bucketId": bucket_id, "appName": app_name, "timeWindow": time_window}
+        api_url = f"{self.api.api_client.configuration.host}/v2/assurance/bucket-app-servers"
+        try:
+            LOG.info(
+                "get_data_assurance_bucket_app_servers: Retrieving servers for bucket '%s' app '%s'",
+                bucket_id,
+                app_name,
+            )
+            response = self.api.v2_assurance_bucket_app_servers_post(
+                authorization=self.bearer_token,
+                v2_assurance_bucket_app_servers_post_request=request_body,
+            )
+            servers = (response.app_servers or []) if response else []
+            LOG.info(
+                "get_data_assurance_bucket_app_servers: Retrieved %s servers for bucket '%s' app '%s'",
+                len(servers),
+                bucket_id,
+                app_name,
+            )
+            return servers
+        except ApiException as e:
+            self._log_api_error(
+                method_name="get_data_assurance_bucket_app_servers",
+                api_url=api_url,
+                request_body=request_body,
+                exception=e,
+            )
+            return []
+
+    # -------------------------------------------------------------------------
+    # Content Filter (block-by-category)
+    # -------------------------------------------------------------------------
+
+    def get_domain_categories(self) -> list:
+        """
+        List the available domain categories for content-filter (block-by-category) rules.
+
+        GET /v1/global/domain-categories
+
+        Returns:
+            list: ManaV2DomainCategory entries (each has id, name, description, type);
+                empty list on error.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/global/domain-categories"
+        try:
+            LOG.info("get_domain_categories: Retrieving domain categories")
+            response = self.api.v1_global_domain_categories_get(authorization=self.bearer_token)
+            categories = (response.domain_categories or []) if response else []
+            LOG.info("get_domain_categories: Retrieved %s categories", len(categories))
+            return categories
+        except ApiException as e:
+            self._log_api_error(method_name="get_domain_categories", api_url=api_url, exception=e)
+            return []
+
+    def get_content_filters(self) -> list:
+        """
+        List all content-filter policies for the current enterprise.
+
+        GET /v1/global/content-filters
+
+        Returns:
+            list: V1GlobalContentFiltersGetResponseRow entries (empty list on error).
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/global/content-filters"
+        try:
+            LOG.info("get_content_filters: Retrieving all content-filter policies")
+            response = self.api.v1_global_content_filters_get(authorization=self.bearer_token)
+            rows = (response.rows or []) if response else []
+            LOG.info("get_content_filters: Retrieved %s content-filter policies", len(rows))
+            return rows
+        except ApiException as e:
+            self._log_api_error(method_name="get_content_filters", api_url=api_url, exception=e)
+            return []
+
+    def get_content_filter_config(self, content_filter_id: int):
+        """
+        Get the full ManaV2GlobalContentFilterConfig for a content-filter policy.
+
+        GET /v1/global/content-filters/{id}
+
+        Args:
+            content_filter_id (int): The content-filter policy ID.
+
+        Returns:
+            ManaV2GlobalContentFilterConfig or None if not found.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/global/content-filters/{content_filter_id}"
+        try:
+            LOG.info("get_content_filter_config: Fetching config for content-filter ID %s", content_filter_id)
+            response = self.api.v1_global_content_filters_global_content_filter_id_get(
+                authorization=self.bearer_token, global_content_filter_id=content_filter_id
+            )
+            config = response.config if response else None
+            LOG.info("get_content_filter_config: Retrieved config for content-filter ID %s", content_filter_id)
+            return config
+        except ApiException as e:
+            self._log_api_error(
+                method_name="get_content_filter_config",
+                api_url=api_url,
+                path_params={"id": content_filter_id},
+                exception=e,
+            )
+            return None
+
+    def create_content_filter(self, config: dict) -> dict:
+        """
+        Create a new content-filter (block-by-category) policy.
+
+        POST /v1/global/content-filters
+
+        Args:
+            config (dict): ManaV2GlobalContentFilterConfig fields (name, rules,
+                lanNames, siteListId, useAllSites).
+
+        Returns:
+            dict: Response containing the new content-filter ID.
+        """
+        request_body = {"config": config}
+        api_url = f"{self.api.api_client.configuration.host}/v1/global/content-filters"
+        if getattr(self, "check_mode", False):
+            try:
+                validated = graphiant_sdk.V1GlobalContentFiltersPostRequest.model_validate(request_body).to_dict()
+            except Exception as sdk_e:
+                raise ValidationError(
+                    f"create_content_filter: Payload failed SDK schema validation: {sdk_e}"
+                ) from sdk_e
+            LOG.info("[check_mode] create_content_filter would create: %s", json.dumps(validated, indent=2))
+            return {"globalContentFilterId": 0}
+        try:
+            LOG.info("create_content_filter: Creating content-filter '%s'", config.get("name"))
+            response = self.api.v1_global_content_filters_post(
+                authorization=self.bearer_token,
+                v1_global_content_filters_post_request=request_body,
+            )
+            return response.to_dict() if hasattr(response, "to_dict") else {}
+        except ApiException as e:
+            self._log_api_error(
+                method_name="create_content_filter",
+                api_url=api_url,
+                request_body=request_body,
+                exception=e,
+            )
+            raise e
+
+    def update_content_filter(self, content_filter_id: int, config: dict) -> dict:
+        """
+        Overwrite an existing content-filter policy.
+
+        PUT /v1/global/content-filters/{id}
+
+        Args:
+            content_filter_id (int): The content-filter policy ID.
+            config (dict): Full ManaV2GlobalContentFilterConfig replacement payload.
+
+        Returns:
+            dict: Response (may contain ``unsyncedDeviceNames``).
+        """
+        request_body = {"config": config}
+        api_url = f"{self.api.api_client.configuration.host}/v1/global/content-filters/{content_filter_id}"
+        if getattr(self, "check_mode", False):
+            LOG.info(
+                "[check_mode] update_content_filter would update ID %s: %s",
+                content_filter_id,
+                json.dumps(request_body, indent=2),
+            )
+            return {}
+        try:
+            LOG.info("update_content_filter: Updating content-filter ID %s", content_filter_id)
+            response = self.api.v1_global_content_filters_global_content_filter_id_put(
+                authorization=self.bearer_token,
+                global_content_filter_id=content_filter_id,
+                v1_global_content_filters_global_content_filter_id_put_request=request_body,
+            )
+            LOG.info("update_content_filter: Successfully updated content-filter ID %s", content_filter_id)
+            return response.to_dict() if hasattr(response, "to_dict") else {}
+        except ApiException as e:
+            self._log_api_error(
+                method_name="update_content_filter",
+                api_url=api_url,
+                path_params={"id": content_filter_id},
+                request_body=request_body,
+                exception=e,
+            )
+            raise e
+
+    def delete_content_filter(self, content_filter_id: int) -> None:
+        """
+        Delete a content-filter policy by ID.
+
+        DELETE /v1/global/content-filters/{id}
+
+        Args:
+            content_filter_id (int): The content-filter policy ID.
+        """
+        api_url = f"{self.api.api_client.configuration.host}/v1/global/content-filters/{content_filter_id}"
+        if getattr(self, "check_mode", False):
+            LOG.info("[check_mode] delete_content_filter would delete ID %s", content_filter_id)
+            return
+        try:
+            LOG.info("delete_content_filter: Deleting content-filter ID %s", content_filter_id)
+            self.api.v1_global_content_filters_global_content_filter_id_delete(
+                authorization=self.bearer_token, global_content_filter_id=content_filter_id
+            )
+            LOG.info("delete_content_filter: Successfully deleted content-filter ID %s", content_filter_id)
+        except ApiException as e:
+            self._log_api_error(
+                method_name="delete_content_filter",
+                api_url=api_url,
+                path_params={"id": content_filter_id},
+                exception=e,
+            )
+            raise e

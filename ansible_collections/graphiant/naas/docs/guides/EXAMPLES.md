@@ -3275,6 +3275,80 @@ Deconfigure deletes only the prefixes listed in the YAML (per segment).
     msg: "{{ static_routes_deconfigure_result.msg }}"
 ```
 
+## Data Assurance Policies
+
+### Module: graphiant.naas.graphiant_data_assurance
+
+`graphiant_data_assurance` manages Data Assurance policies via the portal API from a single YAML config file (`configs/sample_data_assurance_policies.yaml`). Two top-level lists, both optional and managed together:
+
+- **`DataAssurancePolicies`** — assurance policies (include `flexAlgo`) and block-by-URL/app policies (omit `flexAlgo`), sent to `/v1/data/assurance/assurances/global`.
+- **`ContentFilterPolicies`** — block-by-category policies, sent to `/v1/global/content-filters`; each blocks one or more domain `categories` with an optional `allowedUrlList`.
+
+**configure** creates policies that don't exist and updates those that do; **deconfigure** deletes listed policies (the portal requires a policy to be unassigned from all sites before deletion, so the module first updates it to a detached config, then deletes it).
+
+**Validation before push:** name-based fields are resolved and validated against live portal state, and the run fails with an error listing the available values when a name is not found:
+
+- `flexAlgo` — validated against the enterprise flex-algos (`/v1/data/assurance/flex-algos`); omit for block/protection policies.
+- `siteListName` — resolved to a site list ID.
+- `lanNames` — each LAN segment name is validated against the enterprise's global LAN segments; omit or leave empty to apply to all segments.
+
+App names under `apps` are also validated against the profile's bucket, and `isDomain` / `builtinAppId` / `customAppId` / `servers` are auto-filled from bucket telemetry when not provided.
+
+Idempotent: configure compares the desired config against live portal state and skips the update when already matched (`changed: false`); deconfigure silently skips policies not found. With `--check`, nothing is pushed but `changed` reflects whether an apply would modify at least one policy. With `--diff`, pending per-policy changes appear in Ansible `diff` (`before` / `after`) and `details.diff_plan`.
+
+### Playbook
+
+```bash
+ansible-playbook playbooks/data_assurance_management.yml --tags configure --check
+ansible-playbook playbooks/data_assurance_management.yml --tags configure --check --diff
+ansible-playbook playbooks/data_assurance_management.yml --tags configure
+ansible-playbook playbooks/data_assurance_management.yml --tags deconfigure --check
+ansible-playbook playbooks/data_assurance_management.yml --tags deconfigure --check --diff
+ansible-playbook playbooks/data_assurance_management.yml --tags deconfigure
+```
+
+Override the default config file with `-e config_file=<file>`.
+
+### Configure Data Assurance policies
+
+```yaml
+- name: Configure Data Assurance policies
+  graphiant.naas.graphiant_data_assurance:
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    operation: configure
+    data_assurance_config_file: "sample_data_assurance_policies.yaml"
+    detailed_logs: true
+    state: present
+  register: da_configure_result
+  no_log: true
+
+- name: Display result message (includes detailed logs)
+  ansible.builtin.debug:
+    msg: "{{ da_configure_result.msg }}"
+```
+
+### Deconfigure Data Assurance policies
+
+```yaml
+- name: Deconfigure Data Assurance policies
+  graphiant.naas.graphiant_data_assurance:
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    operation: deconfigure
+    data_assurance_config_file: "sample_data_assurance_policies.yaml"
+    detailed_logs: true
+    state: absent
+  register: da_deconfigure_result
+  no_log: true
+
+- name: Display result message (includes detailed logs)
+  ansible.builtin.debug:
+    msg: "{{ da_deconfigure_result.msg }}"
+```
+
 ## Data Exchange Workflows
 
 ### Step 1: Prerequisites
