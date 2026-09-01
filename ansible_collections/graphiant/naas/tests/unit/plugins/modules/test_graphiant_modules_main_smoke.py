@@ -97,7 +97,7 @@ def test_graphiant_bgp_configure(m_am, m_gc) -> None:
     m_gc.return_value = _conn_with(bgp=mgr)
     graphiant_bgp.main()
     m.exit_json.assert_called_once()
-    mgr.configure.assert_called_once_with("x.yaml")
+    mgr.configure.assert_called_once_with("x.yaml", {})
 
 
 @patch("ansible_collections.graphiant.naas.plugins.modules.graphiant_sites.get_graphiant_connection")

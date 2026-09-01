@@ -2408,6 +2408,12 @@ segments:
 
 ## BGP Configuration
 
+**Vault (MD5 passwords):** leave a neighbor's `md5Password` null/absent in the config and pass `vault_bgp_peering_md5_passwords` (configure only, `no_log: true`) keyed by device name → neighbor `remoteIpv4Address`; the vault value fills it in memory, a non-null config value always wins, and the password is redacted in logs and `--diff`. See `configs/vault_secrets.yml.example`.
+
+**Idempotency:** All operations read each device's live BGP state via `get_device_info` and compare it — per LAN segment — against the desired neighbors, `bgpAggregations`, and device-level `routePolicies`. Devices already in the desired state are skipped (reported under `skipped_devices`); only devices that differ are pushed (reported under `configured_devices`), and `changed` reflects whether any device was actually pushed. `deconfigure` reports a change only when a listed neighbor/aggregation still exists; `detach_policies` reports a change only when a policy is still attached. BGP MD5 passwords are excluded from the comparison because the device GET API never returns the secret value.
+
+With `--check`, nothing is pushed; state is still read and would-be payloads are logged under `[check_mode]`, with `changed` reflecting whether an apply would be needed. With `--diff`, pending changes appear in Ansible `diff` (`before` / `after`) and `details.diff_plan` (per-device neighbor/aggregation state under `edge.segments`).
+
 ### Configure BGP peering and/or route aggregations
 
 ```yaml
@@ -2421,10 +2427,31 @@ segments:
     detailed_logs: true
 ```
 
+With neighbor MD5 passwords from Ansible Vault (leave `md5Password` null/absent in the config; the vault fills it in memory only):
+
+```yaml
+- name: Load BGP MD5 passwords from Ansible Vault
+  ansible.builtin.include_vars:
+    file: "configs/vault_secrets.yml"
+  no_log: true
+
+- name: Configure BGP peering with vault MD5 passwords
+  graphiant.naas.graphiant_bgp:
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    bgp_config_file: "sample_bgp_peering.yaml"
+    operation: configure
+    # keyed by device name -> neighbor remoteIpv4Address; see configs/vault_secrets.yml.example
+    vault_bgp_peering_md5_passwords: "{{ vault_bgp_peering_md5_passwords | default({}) }}"
+```
+
 Run:
 ```bash
-ansible-playbook playbooks/complete_network_setup.yml --tags bgp,peering --check
+ansible-playbook playbooks/complete_network_setup.yml --tags bgp,peering --check --diff
 ansible-playbook playbooks/complete_network_setup.yml --tags bgp,peering
+# with vault MD5 passwords (the playbook loads configs/vault_secrets.yml when present):
+ansible-playbook playbooks/complete_network_setup.yml --tags bgp,peering --vault-password-file configs/vault-password-file.sh
 ```
 
 ### Deconfigure BGP peering and route aggregations
@@ -2443,9 +2470,50 @@ Removes all neighbors and aggregations listed in the config file.
 
 Run:
 ```bash
-ansible-playbook playbooks/complete_network_setup.yml --tags deconfigure_bgp_peering --check
+ansible-playbook playbooks/complete_network_setup.yml --tags deconfigure_bgp_peering --check --diff
 ansible-playbook playbooks/complete_network_setup.yml --tags deconfigure_bgp_peering
 ```
+
+### Remove a single neighbor or aggregation (per-entry `state: absent`)
+
+Under `operation: configure`, mark an individual neighbor or aggregation with `state: absent` to remove just that entry while everything else is configured normally — no full deconfigure needed. Idempotent: the removal reports a change only if the target still exists on the device.
+
+```yaml
+bgpPeering:
+  - <device_name>:
+      segments:
+        - lanSegment: <name>
+          neighbors:
+            - remoteIpv4Address: 10.1.17.11   # kept, configured normally
+              peerAs: 60011
+            - remoteIpv4Address: 10.1.17.12   # removed
+              peerAs: 60012
+              state: absent
+          bgpAggregations:
+            - prefix: 1.1.1.0/27                 # kept
+              asSet: true
+            - prefix: 2.2.2.0/27                 # removed
+              state: absent
+```
+
+### Detach a policy from a neighbor you want to keep (`<filter>: absent`)
+
+Under `operation: configure`, set a neighbor filter field to `absent` to detach just that routing policy while keeping the neighbor and its other settings. Omitting a filter field instead leaves the currently attached policy unchanged. Idempotent: reports a change only if that policy is still attached on the device.
+
+```yaml
+bgpPeering:
+  - <device_name>:
+      segments:
+        - lanSegment: <name>
+          neighbors:
+            - remoteIpv4Address: 10.1.17.11
+              peerAs: 60011
+              ipv4InboundFilter: absent          # detach the inbound policy
+              ipv4OutboundFilter: demo_outbound  # keep/attach this one
+              # ipv6 filters omitted -> left unchanged
+```
+
+This differs from `operation: detach_policies`, which detaches policies from every neighbor listed in the file; `<filter>: absent` is a per-neighbor, per-direction detach done inline during `configure`.
 
 ### Detach routing policies (leaves neighbors and aggregations intact)
 
@@ -2461,38 +2529,39 @@ ansible-playbook playbooks/complete_network_setup.yml --tags deconfigure_bgp_pee
 
 ### Config file structure — `sample_bgp_peering.yaml`
 
-Each device entry supports `route_policies` (device-level policy attachment), `neighbors` (BGP peers), and `bgp_aggregations` per segment. Neighbors and aggregations are independent — a segment may define either or both.
+Each device entry supports `routePolicies` (device-level policy attachment), `neighbors` (BGP peers), and `bgpAggregations` per segment. Neighbors and aggregations are independent — a segment may define either or both.
 
 ```yaml
-bgp_peering:
+bgpPeering:
   - <device_name>:
-      route_policies:           # [OPTIONAL] Attach global BGP routing policies at device level
+      routePolicies:           # [OPTIONAL] Attach global BGP routing policies at device level
         - <policy_name>
       segments:
-        - lan_segment: <name>
+        - lanSegment: <name>
+          ebgpMultipath: true    # [OPTIONAL] enable eBGP multipath on this segment (default: off)
           neighbors:            # [OPTIONAL] BGP neighbor peers
-            - remote_ipv4_address: <ip>   # [REQUIRED]
-              peer_as: <asn>              # [REQUIRED]
-              local_interface: <iface>    # [OPTIONAL]
-              ipv4_inbound_filter: <policy_name>   # [OPTIONAL]
-              ipv4_outbound_filter: <policy_name>  # [OPTIONAL]
-              ipv6_inbound_filter: <policy_name>   # [OPTIONAL]
-              ipv6_outbound_filter: <policy_name>  # [OPTIONAL]
-              hold_timer: 90              # [OPTIONAL] seconds (default: 90)
-              keepalive_timer: 30         # [OPTIONAL] seconds (default: 30)
-              ebgp_multi_hop: 1           # [OPTIONAL] TTL (default: 1)
-              as_override: false          # [OPTIONAL] default: false
-              remote_private_as: false    # [OPTIONAL] default: false
-              allow_as_in: 1             # [OPTIONAL] local AS repeat count
-              send_community: true        # [OPTIONAL] default: true
-              md5_password: "secret"      # [OPTIONAL]
+            - remoteIpv4Address: <ip>   # [REQUIRED]
+              peerAs: <asn>              # [REQUIRED]
+              localInterface: <iface>    # [OPTIONAL]
+              ipv4InboundFilter: <policy_name>   # [OPTIONAL]
+              ipv4OutboundFilter: <policy_name>  # [OPTIONAL]
+              ipv6InboundFilter: <policy_name>   # [OPTIONAL]
+              ipv6OutboundFilter: <policy_name>  # [OPTIONAL]
+              holdTimer: 90              # [OPTIONAL] seconds (default: 90)
+              keepaliveTimer: 30         # [OPTIONAL] seconds (default: 30)
+              ebgpMultiHop: 1           # [OPTIONAL] TTL (default: 1)
+              asOverride: false          # [OPTIONAL] default: false
+              remotePrivateAs: false    # [OPTIONAL] default: false
+              allowAsIn: 1             # [OPTIONAL] local AS repeat count
+              sendCommunity: true        # [OPTIONAL] default: true
+              md5Password: "secret"      # [OPTIONAL]
               bfd: false                  # [OPTIONAL] default: false
-              minimum_interval: 1000      # [OPTIONAL] BFD ms, Range: 250-30000 (default: 1000)
-              local_multiplier: 3         # [OPTIONAL] BFD multiplier, Range: 1-255 (default: 3)
-          bgp_aggregations:     # [OPTIONAL] Route aggregations for this segment
+              minimumInterval: 1000      # [OPTIONAL] BFD ms, Range: 250-30000 (default: 1000)
+              localMultiplier: 3         # [OPTIONAL] BFD multiplier, Range: 1-255 (default: 3)
+          bgpAggregations:     # [OPTIONAL] Route aggregations for this segment
             - prefix: 1.1.1.0/27          # [REQUIRED] Prefix to aggregate (CIDR)
-              as_set: false               # [OPTIONAL] Include AS set info (default: false)
-              summary_only: false         # [OPTIONAL] Suppress more-specific routes (default: false)
+              asSet: false               # [OPTIONAL] Include AS set info (default: false)
+              summaryOnly: false         # [OPTIONAL] Suppress more-specific routes (default: false)
 ```
 
 ## Global Configuration Objects

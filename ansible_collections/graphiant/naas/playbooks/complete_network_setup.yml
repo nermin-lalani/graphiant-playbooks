@@ -3,6 +3,10 @@
   hosts: localhost
   gather_facts: false
   vars:
+    # Optional Ansible Vault secrets (loaded below when the file exists). Provide the vault
+    # password with --vault-password-file configs/vault-password-file.sh
+    vault_secrets_path: "{{ playbook_dir }}/../configs/vault_secrets.yml"
+    vault_bgp_peering_md5_passwords: {}
     # graphiant_host: "https://api.graphiant.com"
     # graphiant_username: "{{ vault_graphiant_username }}"
     # graphiant_password: "{{ vault_graphiant_password }}"
@@ -20,6 +24,17 @@
       # password: "{{ graphiant_password | default(lookup('ini', 'password file=/absolute/path/credentials.ini section=credentials')) }}"
 
   tasks:
+    - name: Load vault secrets for BGP MD5 passwords (only when running BGP tasks)
+      ansible.builtin.include_vars:
+        file: "{{ vault_secrets_path }}"
+      no_log: true
+      # Skipped if the vault file is absent; ignored if it is encrypted and no
+      # --vault-password-file was supplied (the BGP task then falls back to no vault).
+      when: vault_secrets_path is file
+      ignore_errors: true
+      register: vault_load_result
+      tags: ['bgp', 'peering']
+
     - name: Configure global prefix sets
       graphiant.naas.graphiant_global_config:
         <<: *graphiant_client_params
@@ -218,13 +233,19 @@
         operation: "configure"
         detailed_logs: true
         state: present
+        # Optional: neighbor MD5 passwords from Ansible Vault (leave md5Password null in the config).
+        # Provide with -e @configs/vault_secrets.yml --vault-password-file configs/vault-password-file.sh
+        vault_bgp_peering_md5_passwords: "{{ vault_bgp_peering_md5_passwords | default({}) }}"
       ignore_errors: true
       register: bgp_peering_result
       tags: ['bgp', 'peering']
 
     - name: Display BGP peering result
       ansible.builtin.debug:
-        msg: "{{ bgp_peering_result.msg }}"
+        msg: |
+          {{ bgp_peering_result.msg }}
+          configured_devices={{ bgp_peering_result.configured_devices | default([]) }}
+          skipped_devices={{ bgp_peering_result.skipped_devices | default([]) }}
       tags: ['bgp', 'peering']
 
     - name: Deconfigure BGP peering
@@ -239,7 +260,10 @@
 
     - name: Display deconfigure BGP peering result
       ansible.builtin.debug:
-        msg: "{{ deconfigure_bgp_peering_result.msg }}"
+        msg: |
+          {{ deconfigure_bgp_peering_result.msg }}
+          configured_devices={{ deconfigure_bgp_peering_result.configured_devices | default([]) }}
+          skipped_devices={{ deconfigure_bgp_peering_result.skipped_devices | default([]) }}
       tags: ['deconfigure_bgp_peering']
 
     - name: Configure global NTP objects
