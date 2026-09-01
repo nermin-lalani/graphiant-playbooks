@@ -239,6 +239,7 @@ This project is licensed under the GNU General Public License v3.0 or later (GPL
 
 - [Graphiant SDK Python](https://github.com/Graphiant-Inc/graphiant-sdk-python)
 - [Graphiant SDK Go](https://github.com/Graphiant-Inc/graphiant-sdk-go)
+- [Graphiant Terraform Provider](https://github.com/Graphiant-Inc/terraform-provider-graphiant)
 
 ---
 
