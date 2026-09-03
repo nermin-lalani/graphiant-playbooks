@@ -927,24 +927,51 @@ class TestGraphiantPlaybooks(unittest.TestCase):
 
     def test_configure_bgp_peering(self):
         """
-        Configure BGP Peering.
+        Configure BGP Peering (exercises camelCase and legacy snake_case fields, per-entry
+        ``state: absent``, per-policy detach, and vault MD5 fill).
+
+        ``sample_bgp_peering.yaml`` uses camelCase on edge-1/edge-3 and legacy snake_case
+        on edge-2 (proving the aliases work); marks a neighbor and an aggregation
+        ``state: absent`` (removed under configure); detaches one neighbor's inbound policy
+        via ``ipv4_inbound_filter: absent``; and leaves a neighbor's ``md5Password`` unset so
+        it is filled from ``vault_bgp_peering_md5_passwords`` in ``vault_secrets.yml.example``.
+        Second run should be idempotent (changed=False) if desired state already matches.
         """
         graphiant_config = graphiant_config_from_read_config()
-        graphiant_config.bgp.configure("sample_bgp_peering.yaml")
+        config_path = graphiant_config.config_utils.config_path
+        vault_md5 = vault_dict_from_example(config_path, "vault_bgp_peering_md5_passwords")
+
+        result = graphiant_config.bgp.configure("sample_bgp_peering.yaml", vault_md5)
+        LOG.info("Configure BGP peering result: %s", result)
+        result = graphiant_config.bgp.configure("sample_bgp_peering.yaml", vault_md5)
+        LOG.info("Configure BGP peering result (idempotency check): %s", result)
+        assert result['changed'] is False, "Configure BGP peering idempotency failed"
 
     def test_deconfigure_bgp_peering(self):
         """
         Deconfigure BGP Peering.
+
+        Second run should be idempotent (changed=False) when they are already absent.
         """
         graphiant_config = graphiant_config_from_read_config()
-        graphiant_config.bgp.deconfigure("sample_bgp_peering.yaml")
+        result = graphiant_config.bgp.deconfigure("sample_bgp_peering.yaml")
+        LOG.info("Deconfigure BGP peering result: %s", result)
+        result = graphiant_config.bgp.deconfigure("sample_bgp_peering.yaml")
+        LOG.info("Deconfigure BGP peering result (idempotency check): %s", result)
+        assert result['changed'] is False, "Deconfigure BGP peering idempotency failed"
 
     def test_detach_policies_from_bgp_peers(self):
         """
         Detach policies from BGP peers.
+
+        Second run should be idempotent (changed=False) when policies are already detached.
         """
         graphiant_config = graphiant_config_from_read_config()
-        graphiant_config.bgp.detach_policies("sample_bgp_peering.yaml")
+        result = graphiant_config.bgp.detach_policies("sample_bgp_peering.yaml")
+        LOG.info("Detach BGP policies result: %s", result)
+        result = graphiant_config.bgp.detach_policies("sample_bgp_peering.yaml")
+        LOG.info("Detach BGP policies result (idempotency check): %s", result)
+        assert result['changed'] is False, "Detach BGP policies idempotency failed"
 
     def test_create_data_exchange_services(self):
         """

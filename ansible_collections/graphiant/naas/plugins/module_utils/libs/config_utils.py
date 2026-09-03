@@ -114,42 +114,6 @@ class ConfigUtils(PortalUtils):
             LOG.error("Failed to process global Graphiant filter %s: %s", kwargs.get("name"), str(e))
             raise ConfigurationError(f"Global Graphiant filter processing failed: {str(e)}")
 
-    def device_bgp_peering(self, config_payload, action="add", **kwargs):
-        """
-        Update the Device neighbors section of configuration payload.
-
-        Args:
-            config_payload (dict): Dictionary to be updated with BGP peering configuration.
-            action (str, optional): Action to perform, either "add" or "delete". Defaults to "add".
-            **kwargs: Additional parameters used for rendering the BGP peering configuration.
-
-        Raises:
-            ConfigurationError: If required parameters are missing.
-        """
-        self._validate_required_params(kwargs, ["segments"])
-        LOG.debug("Edge BGP peering: %s %s", action.upper(), kwargs.get("segments"))
-
-        try:
-            # Handle route policies global ID resolution (API expects integer; None renders as string "None")
-            global_ids = {}
-            if kwargs.get("route_policies"):
-                for policy_name in kwargs.get("route_policies"):
-                    rid = self.gsdk.get_global_routing_policy_id(policy_name)
-                    if rid is None:
-                        raise ConfigurationError(
-                            f"Routing policy '{policy_name}' not found. "
-                            "Configure global BGP filters first "
-                            "(e.g. graphiant_global_config with sample_global_bgp_filters.yaml)."
-                        )
-                    global_ids[policy_name] = rid
-                    LOG.debug("Global ID for %s: %s", policy_name, global_ids[policy_name])
-
-            result = self.template.render_bgp_peering(action=action, global_ids=global_ids, **kwargs)
-            config_payload.update(result)
-        except Exception as e:
-            LOG.error("Failed to process device BGP peering %s: %s", kwargs.get("segments"), str(e))
-            raise ConfigurationError(f"Device BGP peering processing failed: {str(e)}")
-
     def device_interface(self, config_payload, action="add", **kwargs):
         """
         Update the device interfaces section of the configuration payload.

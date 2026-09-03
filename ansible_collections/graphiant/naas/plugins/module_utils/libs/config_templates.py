@@ -62,7 +62,6 @@ class ConfigTemplates:
         "global_prefix_set": "global_prefix_set_template.yaml",
         "global_bgp_filter": "global_bgp_routing_policies_template.yaml",
         "global_graphiant_filter": "global_graphiant_routing_policies_template.yaml",
-        "bgp_peering": "bgp_peering_template.yaml",
         "snmp_service": "global_snmps_template.yaml",
         "syslog_service": "global_syslog_template.yaml",
         "ipfix_service": "global_ipfix_template.yaml",
@@ -195,10 +194,6 @@ class ConfigTemplates:
     def render_global_graphiant_filter(self, **kwargs) -> Dict[str, Any]:
         """Render global Graphiant filter template."""
         return self.render_by_type("global_graphiant_filter", **kwargs)
-
-    def render_bgp_peering(self, **kwargs) -> Dict[str, Any]:
-        """Render BGP peering template."""
-        return self.render_by_type("bgp_peering", **kwargs)
 
     def render_snmp_service(self, **kwargs) -> Dict[str, Any]:
         """Render SNMP service template."""

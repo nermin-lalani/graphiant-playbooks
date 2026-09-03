@@ -24,7 +24,7 @@ description:
   - Enables attachment and detachment of global BGP routing policies (filters) to BGP peers.
   - Supports BGP route aggregation configuration per LAN segment.
   - Neighbors and aggregations are independent — a segment can define either or both.
-  - All operations use Jinja2 templates for consistent configuration deployment.
+  - Supports enabling/disabling eBGP multipath per LAN segment via a segment C(ebgpMultipath) field.
   - Configuration files support Jinja2 templating for dynamic generation.
 version_added: "25.12.0"
 notes:
@@ -32,16 +32,28 @@ notes:
   - "  - Configure (state: present): Create BGP peering neighbors, route aggregations, and attach routing policies."
   - "  - Deconfigure (state: absent): Remove BGP peering neighbors and route aggregations. Policies are detached."
   - "  - Detach Policies: Detach global BGP routing policies from BGP peers without removing the peers or aggregations."
+  - "Per-entry removal: within V(configure), an individual neighbor or aggregation marked with"
+  - "  C(state: absent) in the config file is removed while all other entries are configured normally,"
+  - "  so a single peer/aggregation can be deleted without a full deconfigure."
+  - "Per-policy detach: within V(configure), set a neighbor filter field"
+  - "  (C(ipv4InboundFilter), C(ipv4OutboundFilter), C(ipv6InboundFilter), C(ipv6OutboundFilter))"
+  - "  to C(absent) to detach just that routing policy while keeping the neighbor and its other settings."
+  - "  Omitting a filter field leaves the currently attached policy unchanged."
+  - "Config-file fields use camelCase (e.g. C(remoteIpv4Address), C(peerAs), C(lanSegment), C(bgpAggregations))."
+  - "  The original snake_case field names (C(remote_ipv4_address), C(peer_as), ...) are still accepted as"
+  - "  aliases for backward compatibility; when both forms are given the camelCase value wins."
   - "Configuration files support Jinja2 templating syntax for dynamic configuration generation."
   - "The module automatically resolves device names, site names, and policy names to IDs."
   - "All operations are idempotent and safe to run multiple times."
   - "Global BGP filters must be created using M(graphiant.naas.graphiant_global_config) module"
   - "before attaching to BGP peers."
   - "BGP Aggregation config file fields per segment entry:"
-  - "  bgp_aggregations: list of aggregation entries, each with:"
+  - "  bgpAggregations: list of aggregation entries, each with:"
   - "    prefix (required): The network prefix to aggregate, e.g. 1.1.1.0/27."
-  - "    as_set (optional, default false): Include AS set information in the aggregated route."
-  - "    summary_only (optional, default false): Suppress advertisement of more-specific routes."
+  - "    asSet (optional, default false): Include AS set information in the aggregated route."
+  - "    summaryOnly (optional, default false): Suppress advertisement of more-specific routes."
+  - "    state (optional): Set to 'absent' to remove just this aggregation under V(configure)."
+  - "  Neighbor entries likewise accept state: absent to remove a single peer under V(configure)."
 extends_documentation_fragment:
   - graphiant.naas.graphiant_portal_auth
 options:
@@ -81,18 +93,29 @@ options:
       - Logs are captured and included in the result_msg for display using M(ansible.builtin.debug) module.
     type: bool
     default: false
+  vault_bgp_peering_md5_passwords:
+    description:
+      - Dict of device name to BGP neighbor address to MD5 password (configure only).
+      - Fills a neighbor's MD5 password from Ansible Vault only when C(md5Password) is null/absent
+        in the config file; a non-null value in the config always wins.
+      - Pass from playbook vars loaded from an encrypted I(vault_secrets.yml); secrets stay in memory.
+      - Keys must match the device name and the neighbor C(remoteIpv4Address) in the BGP config.
+    type: dict
+    default: {}
+    required: false
 
 attributes:
   check_mode:
-    description: Supports check mode with partial support.
-    support: partial
+    description: Full check mode support with per-device state comparison.
+    support: full
     details: >
-      The module cannot accurately determine whether changes would actually be made without
-      querying the current state via API calls. In check mode, the module assumes that changes
-      would be made and returns V(changed=True) for all operations (V(configure), V(deconfigure),
-      V(detach_policies)). This means that check mode may report changes even when the
-      configuration is already applied. The module does not perform state comparison in check
-      mode due to API limitations.
+      The module fetches each device's current BGP state and compares it against the desired
+      configuration. In check mode the same comparison runs, but the config push is skipped;
+      V(changed) reflects whether a push would have occurred. Devices already in the desired
+      state are reported under RV(skipped_devices) and do not count as changes.
+  diff_mode:
+    description: Supports diff mode; shows per-device before/after BGP state when run with C(--diff).
+    support: full
 
 requirements:
   - python >= 3.7
@@ -119,6 +142,42 @@ EXAMPLES = r"""
     password: "{{ graphiant_password }}"
     detailed_logs: true
   register: bgp_result
+
+# Load MD5 passwords from an encrypted vault file (secrets stay in memory only).
+- name: Load BGP MD5 passwords from Ansible Vault
+  ansible.builtin.include_vars: "configs/vault_secrets.yml"
+  no_log: true
+
+- name: Configure BGP peering with neighbor MD5 passwords from Ansible Vault
+  graphiant.naas.graphiant_bgp:
+    operation: configure
+    bgp_config_file: "sample_bgp_peering.yaml"
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
+    # Leave md5Password null/absent in the config; vault fills it per device -> neighbor address.
+    vault_bgp_peering_md5_passwords: "{{ vault_bgp_peering_md5_passwords | default({}) }}"
+  register: bgp_result
+
+# Remove a single neighbor/aggregation without a full deconfigure by marking
+# the entry with `state: absent` in the config file, e.g.:
+#   bgpPeering:
+#     - edge-1-sdktest:
+#         segments:
+#           - lanSegment: lan-7-test
+#             neighbors:
+#               - remoteIpv4Address: 10.1.17.11   # kept, configured normally
+#                 peerAs: 60011
+#               - remoteIpv4Address: 10.1.17.12   # removed
+#                 peerAs: 60012
+#                 state: absent
+- name: Configure BGP peering (per-entry state:absent removes just that neighbor/aggregation)
+  graphiant.naas.graphiant_bgp:
+    operation: configure
+    bgp_config_file: "sample_bgp_peering.yaml"
+    host: "{{ graphiant_host }}"
+    username: "{{ graphiant_username }}"
+    password: "{{ graphiant_password }}"
 
 - name: Detach policies from BGP peers
   graphiant.naas.graphiant_bgp:
@@ -164,7 +223,8 @@ msg:
 changed:
   description:
     - Whether the operation made changes to the system.
-    - V(true) for all configure/deconfigure/detach operations.
+    - V(true) only when at least one device required a config push.
+    - V(false) when every device already matched the desired state (idempotent no-op).
   type: bool
   returned: always
   sample: true
@@ -181,6 +241,25 @@ bgp_config_file:
   type: str
   returned: always
   sample: "sample_bgp_peering.yaml"
+configured_devices:
+  description:
+    - Names of devices whose BGP configuration was pushed (differed from desired state).
+  type: list
+  elements: str
+  returned: always
+  sample: ["edge-1-sdktest"]
+skipped_devices:
+  description:
+    - Names of devices skipped because they already matched the desired state.
+  type: list
+  elements: str
+  returned: always
+  sample: ["edge-2-sdktest"]
+details:
+  description:
+    - Manager result, including the per-device C(diff_plan) with before/after BGP state.
+  type: dict
+  returned: always
 """
 
 from ansible.module_utils.basic import AnsibleModule  # noqa: E402
@@ -188,6 +267,9 @@ from ansible_collections.graphiant.naas.plugins.module_utils.graphiant_utils imp
     get_graphiant_connection,
     graphiant_portal_auth_argument_spec,
     handle_graphiant_exception,
+)
+from ansible_collections.graphiant.naas.plugins.module_utils.libs.device_config_common import (  # noqa: E402
+    apply_module_diff,
 )
 from ansible_collections.graphiant.naas.plugins.module_utils.logging_decorator import capture_library_logs  # noqa: E402
 
@@ -204,22 +286,38 @@ def execute_with_logging(module, func, *args, **kwargs):
         **kwargs: Keyword arguments to pass to the function
 
     Returns:
-        dict: Result with 'changed' and 'result_msg' keys
+        dict: Result with 'changed', 'result_msg', 'details', 'configured_devices',
+        and 'skipped_devices' keys.
     """
-    # Extract success_msg from kwargs before passing to func
+    # Extract messaging kwargs before passing to func
     success_msg = kwargs.pop("success_msg", "Operation completed successfully")
+    no_change_msg = kwargs.pop("no_change_msg", "No changes needed; device(s) already in desired state")
 
-    try:
-        result = func(*args, **kwargs)
+    result = func(*args, **kwargs)
 
-        # If the function returns a dict with 'changed' key, use it
-        if isinstance(result, dict) and "changed" in result:
-            return {"changed": result["changed"], "result_msg": success_msg, "details": result}
+    # If the function returns a dict with 'changed' key, use it
+    if isinstance(result, dict) and "changed" in result:
+        changed = bool(result.get("changed"))
+        configured = result.get("configured_devices") or []
+        skipped = result.get("skipped_devices") or []
 
-        # Fallback for functions that don't return change status
-        return {"changed": True, "result_msg": success_msg}
-    except Exception as e:
-        raise e
+        if changed:
+            msg = success_msg
+        else:
+            msg = no_change_msg
+            if skipped:
+                msg += f" (skipped {len(skipped)} device(s))"
+
+        return {
+            "changed": changed,
+            "result_msg": msg,
+            "details": result,
+            "configured_devices": configured,
+            "skipped_devices": skipped,
+        }
+
+    # Fallback for functions that don't return change status
+    return {"changed": True, "result_msg": success_msg, "details": {}, "configured_devices": [], "skipped_devices": []}
 
 
 def main():
@@ -234,6 +332,7 @@ def main():
         operation=dict(type="str", required=False, choices=["configure", "deconfigure", "detach_policies"]),
         state=dict(type="str", required=False, default="present", choices=["present", "absent"]),
         detailed_logs=dict(type="bool", required=False, default=False),
+        vault_bgp_peering_md5_passwords=dict(type="dict", required=False, default={}, no_log=True),
     )
 
     # Create Ansible module
@@ -271,18 +370,16 @@ def main():
         graphiant_config = connection.graphiant_config
 
         # Execute the requested operation
-        changed = False
-        result_msg = ""
-
         if operation == "configure":
+            vault_bgp_peering_md5_passwords = params.get("vault_bgp_peering_md5_passwords") or {}
             result = execute_with_logging(
                 module,
                 graphiant_config.bgp.configure,
                 bgp_config_file,
+                vault_bgp_peering_md5_passwords,
                 success_msg="Successfully configured BGP peering and attached policies",
+                no_change_msg="BGP peering already matches desired state; no changes needed",
             )
-            changed = result["changed"]
-            result_msg = result["result_msg"]
 
         elif operation == "detach_policies":
             result = execute_with_logging(
@@ -290,9 +387,8 @@ def main():
                 graphiant_config.bgp.detach_policies,
                 bgp_config_file,
                 success_msg="Successfully detached policies from BGP peers",
+                no_change_msg="BGP policies already detached; no changes needed",
             )
-            changed = result["changed"]
-            result_msg = result["result_msg"]
 
         elif operation == "deconfigure":
             result = execute_with_logging(
@@ -300,12 +396,31 @@ def main():
                 graphiant_config.bgp.deconfigure,
                 bgp_config_file,
                 success_msg="Successfully deconfigured BGP peering",
+                no_change_msg="BGP peering already absent; no changes needed",
             )
-            changed = result["changed"]
-            result_msg = result["result_msg"]
+
+        else:
+            supported_operations = ["configure", "deconfigure", "detach_policies"]
+            module.fail_json(
+                msg=f"Unsupported operation '{operation}'. "
+                f"Supported operations: {', '.join(supported_operations)}.",
+                operation=operation,
+            )
+            return
 
         # Return success
-        module.exit_json(changed=changed, msg=result_msg, operation=operation, bgp_config_file=bgp_config_file)
+        details = result.get("details") or {}
+        exit_payload = dict(
+            changed=result["changed"],
+            msg=result["result_msg"],
+            operation=operation,
+            bgp_config_file=bgp_config_file,
+            configured_devices=result.get("configured_devices", []),
+            skipped_devices=result.get("skipped_devices", []),
+            details=details,
+        )
+        apply_module_diff(module, exit_payload, details)
+        module.exit_json(**exit_payload)
 
     except Exception as e:
         error_msg = handle_graphiant_exception(e, operation)

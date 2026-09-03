@@ -119,43 +119,6 @@ def test_global_graphiant_filter_add(_mock_client, mock_tmpl_class) -> None:
 
 @patch("ansible_collections.graphiant.naas.plugins.module_utils.libs.config_utils.ConfigTemplates")
 @patch("ansible_collections.graphiant.naas.plugins.module_utils.libs.portal_utils.GraphiantPortalClient")
-def test_device_bgp_peering_resolves_route_policies(_mock_client, mock_tmpl_class) -> None:
-    client = MagicMock()
-    client.return_value = client
-    client.get_global_routing_policy_id.side_effect = lambda n: 42 if n == "p1" else 99
-    _mock_client.return_value = client
-
-    template = MagicMock()
-    template.render_bgp_peering.return_value = {"neighbors": {"n1": {}}}
-    mock_tmpl_class.return_value = template
-
-    cu = ConfigUtils(base_url="https://api.example.com", username="u", password="p")
-    payload: dict = {}
-    cu.device_bgp_peering(
-        payload, action="add", segments="s1", route_policies=["p1", "p2"]
-    )
-    template.render_bgp_peering.assert_called_once()
-    call_kw = template.render_bgp_peering.call_args[1]
-    assert call_kw["global_ids"] == {"p1": 42, "p2": 99}
-
-
-@patch("ansible_collections.graphiant.naas.plugins.module_utils.libs.config_utils.ConfigTemplates")
-@patch("ansible_collections.graphiant.naas.plugins.module_utils.libs.portal_utils.GraphiantPortalClient")
-def test_device_bgp_peering_missing_policy(_mock_client, mock_tmpl_class) -> None:
-    client = MagicMock()
-    client.get_global_routing_policy_id.return_value = None
-    _mock_client.return_value = client
-    mock_tmpl_class.return_value = MagicMock()
-
-    cu = ConfigUtils(base_url="https://api.example.com", username="u", password="p")
-    with pytest.raises(ConfigurationError, match="not found"):
-        cu.device_bgp_peering(
-            {}, action="add", segments="s1", route_policies=["missing"]
-        )
-
-
-@patch("ansible_collections.graphiant.naas.plugins.module_utils.libs.config_utils.ConfigTemplates")
-@patch("ansible_collections.graphiant.naas.plugins.module_utils.libs.portal_utils.GraphiantPortalClient")
 def test_vrrp_interfaces_creates_interfaces_dict(_mock_client, mock_tmpl_class) -> None:
     template = MagicMock()
     template.render_vrrp_interfaces.return_value = {"interfaces": {"eth0": {"v": 1}}}
