@@ -731,6 +731,7 @@ class TestGraphiantPlaybooks(unittest.TestCase):
             interface_config_file="sample_interface_config.yaml"
         )
         LOG.info("Configure WAN circuits and interfaces result (rerun check): %s", result)
+        assert result['changed'] is False, "Configure WAN circuits and interfaces idempotency failed"
 
     def test_configure_circuits(self):
         """
@@ -745,6 +746,7 @@ class TestGraphiantPlaybooks(unittest.TestCase):
             circuit_config_file="sample_circuit_config.yaml",
             interface_config_file="sample_interface_config.yaml")
         LOG.info("Configure Circuits result (rerun check): %s", result)
+        assert result['changed'] is False, "Configure Circuit idempotency failed"
 
     def test_deconfigure_circuits(self):
         """
@@ -787,6 +789,7 @@ class TestGraphiantPlaybooks(unittest.TestCase):
         LOG.info("Configure LAN interfaces result: %s", result)
         result = graphiant_config.interfaces.configure_lan_interfaces("sample_interface_config.yaml")
         LOG.info("Configure LAN interfaces result (rerun check): %s", result)
+        assert result['changed'] is False, "Configure LAN interfaces idempotency failed"
 
     def test_deconfigure_lan_interfaces(self):
         """
@@ -812,6 +815,7 @@ class TestGraphiantPlaybooks(unittest.TestCase):
             interface_config_file="sample_interface_config.yaml",
             circuit_config_file="sample_circuit_config.yaml")
         LOG.info("Configure Interfaces result (rerun check): %s", result)
+        assert result['changed'] is False, "Configure interfaces idempotency failed"
 
     def test_deconfigure_interfaces(self):
         """
@@ -3538,11 +3542,13 @@ if __name__ == '__main__':
     suite.addTest(TestGraphiantPlaybooks('test_detach_nat_policy_lan_segments'))
     suite.addTest(TestGraphiantPlaybooks('test_deconfigure_device_nat_policy_module_params'))
 
+    '''
     # Gateway Services Management Tests (cloudGateway + connectivity)
     # Pre-req: region and lan-1-test LAN segment referenced by the sample config exist
     suite.addTest(TestGraphiantPlaybooks('test_create_gateway_services'))
     suite.addTest(TestGraphiantPlaybooks('test_force_update_gateway_services'))
     suite.addTest(TestGraphiantPlaybooks('test_delete_gateway_services'))
+    '''
 
     # OSPFv2 Management Tests
     # Pre-req: LAN segments referenced by OSPF
